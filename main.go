@@ -106,7 +106,7 @@ func loadConfig() (*Config, error) {
 }
 
 func printTransactionDetails(txHash common.Hash, amount float64, receiver string, gasFeeCap, gasTipCap *big.Int) {
-	fmt.Printf("%-20s: %-20.2f MON \n", "Amount Sent", amount)
+	fmt.Printf("%-20s: %.2f MON\n", "Amount Sent", amount)
 	fmt.Printf("%-20s: %-20s \n", "To Address", receiver)
 	fmt.Printf("%-20s: %-20s \n", "Max Fee (GasFeeCap)", fmt.Sprintf("%s Gwei", weiToGwei(gasFeeCap)))
 	fmt.Printf("%-20s: %-20s \n", "Priority Fee (GasTipCap)", fmt.Sprintf("%s Gwei", weiToGwei(gasTipCap)))

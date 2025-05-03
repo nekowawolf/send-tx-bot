@@ -42,7 +42,7 @@ func loadConfig() (*TxConfig, error) {
 		return nil, fmt.Errorf("PRIVATE_KEY is required in .env")
 	}
 
-	delay := 2
+	delay := 20
 	if dl := os.Getenv("DELAY_SECONDS"); dl != "" {
 		var err error
 		delay, err = strconv.Atoi(dl)
@@ -150,7 +150,7 @@ func Monad(amount float64, txPerAddress int) {
 				log.Printf("Failed to send transaction %d: %v", i, err)
 				totalFailed++
 			} else {
-				printTransactionDetails(txHash, amount, receiver.Hex())
+				printTransactionDetails(client, txHash, amount, receiver.Hex())
 				fmt.Printf("Transaction %d/%d completed\n", i, config.TxPerAddress)
 				totalSuccess++
 			}
@@ -168,55 +168,80 @@ func Monad(amount float64, txPerAddress int) {
 }
 
 func sendTransaction(client *ethclient.Client, privateKey *ecdsa.PrivateKey, toAddress common.Address, amountWei *big.Int, config *TxConfig, nonce uint64) (common.Hash, error) {
-	var txHash common.Hash
-	var lastErr error
+    var txHash common.Hash
+    var lastErr error
 
-	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
-		gasTipCap, err := client.SuggestGasTipCap(context.Background())
-		if err != nil {
-			lastErr = fmt.Errorf("failed to get gas tip cap (attempt %d): %v", attempt, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
+    for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
+        gasTipCap, err := client.SuggestGasTipCap(context.Background())
+        if err != nil {
+            lastErr = fmt.Errorf("failed to get gas tip cap (attempt %d): %v", attempt, err)
+            time.Sleep(2 * time.Second)
+            continue
+        }
 
-		head, err := client.HeaderByNumber(context.Background(), nil)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to get chain head (attempt %d): %v", attempt, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
+        head, err := client.HeaderByNumber(context.Background(), nil)
+        if err != nil {
+            lastErr = fmt.Errorf("failed to get chain head (attempt %d): %v", attempt, err)
+            time.Sleep(2 * time.Second)
+            continue
+        }
 
-		baseFee := new(big.Int).Mul(head.BaseFee, big.NewInt(int64(config.MaxFeeMultiplier*100)))
-		baseFee = baseFee.Div(baseFee, big.NewInt(100))
-		gasFeeCap := new(big.Int).Add(gasTipCap, baseFee)
+        baseFee := new(big.Int).Mul(head.BaseFee, big.NewInt(int64(config.MaxFeeMultiplier*100)))
+        baseFee = baseFee.Div(baseFee, big.NewInt(100))
+        gasFeeCap := new(big.Int).Add(gasTipCap, baseFee)
 
-		tx := types.NewTx(&types.DynamicFeeTx{
-			ChainID:   big.NewInt(CHAIN_ID),
-			Nonce:     nonce,
-			To:        &toAddress,
-			Value:     amountWei,
-			Gas:       21000,
-			GasTipCap: gasTipCap,
-			GasFeeCap: gasFeeCap,
-		})
+        tx := types.NewTx(&types.DynamicFeeTx{
+            ChainID:   big.NewInt(CHAIN_ID),
+            Nonce:     nonce,
+            To:        &toAddress,
+            Value:     amountWei,
+            Gas:       21000, 
+            GasTipCap: gasTipCap,
+            GasFeeCap: gasFeeCap,
+        })
 
-		signedTx, err := types.SignTx(tx, types.NewLondonSigner(big.NewInt(CHAIN_ID)), privateKey)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to sign transaction (attempt %d): %v", attempt, err)
-			continue
-		}
+        signedTx, err := types.SignTx(tx, types.NewLondonSigner(big.NewInt(CHAIN_ID)), privateKey)
+        if err != nil {
+            lastErr = fmt.Errorf("failed to sign transaction (attempt %d): %v", attempt, err)
+            time.Sleep(time.Duration(attempt) * time.Second)
+            continue
+        }
 
-		err = client.SendTransaction(context.Background(), signedTx)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to send transaction (attempt %d): %v", attempt, err)
-			time.Sleep(time.Duration(attempt) * time.Second)
-			continue
-		}
+        err = client.SendTransaction(context.Background(), signedTx)
+        if err != nil {
+            lastErr = fmt.Errorf("failed to send transaction (attempt %d): %v", attempt, err)
+            time.Sleep(time.Duration(attempt) * time.Second)
+            continue
+        }
 
-		return signedTx.Hash(), nil
-	}
+        txHash = signedTx.Hash()
+        if err := waitForTransactionConfirmation(client, txHash, 3, 5); err != nil {
+            lastErr = fmt.Errorf("transaction not mined (attempt %d): %v", attempt, err)
+            continue
+        }
 
-	return txHash, fmt.Errorf("max attempts reached, last error: %v", lastErr)
+        return txHash, nil
+    }
+
+    return txHash, fmt.Errorf("max attempts reached, last error: %v", lastErr)
+}
+
+func waitForTransactionConfirmation(client *ethclient.Client, txHash common.Hash, maxAttempts int, delaySeconds int) error {
+    for attempt := 1; attempt <= maxAttempts; attempt++ {
+        _, isPending, err := client.TransactionByHash(context.Background(), txHash)
+        if err == nil && !isPending {
+            return nil
+        }
+        
+        if err != nil {
+            log.Printf("Transaction status check failed (attempt %d): %v", attempt, err)
+        } else if isPending {
+            log.Printf("Transaction still pending (attempt %d)", attempt)
+        }
+        
+        time.Sleep(time.Duration(delaySeconds) * time.Second)
+    }
+    return fmt.Errorf("transaction not confirmed after %d attempts", maxAttempts)
 }
 
 func convertMONtoWei(amountMON float64) *big.Int {
@@ -226,10 +251,19 @@ func convertMONtoWei(amountMON float64) *big.Int {
 	return wei
 }
 
-func printTransactionDetails(txHash common.Hash, amount float64, receiver string) {
-	fmt.Println("──────────────────────────────────────────────")
-	fmt.Printf("%-20s: %.4f MON\n", "Amount Sent", amount)
-	fmt.Printf("%-20s: %s\n", "To Address", receiver)
-	fmt.Printf("%-20s: %s\n", "Tx Hash", txHash.Hex())
-	fmt.Printf("%-20s: %s\n", "Explorer Link", fmt.Sprintf("https://testnet.monadexplorer.com/tx/%s", txHash.Hex()))
+func printTransactionDetails(client *ethclient.Client, txHash common.Hash, amount float64, receiver string) {
+    _, isPending, err := client.TransactionByHash(context.Background(), txHash)
+    status := "Confirmed"
+    if err != nil {
+        status = fmt.Sprintf("Error: %v", err)
+    } else if isPending {
+        status = "Pending"
+    }
+
+    fmt.Println("──────────────────────────────────────────────")
+    fmt.Printf("%-20s: %.4f MON\n", "Amount Sent", amount)
+    fmt.Printf("%-20s: %s\n", "To Address", receiver)
+    fmt.Printf("%-20s: %s\n", "Status", status)
+    fmt.Printf("%-20s: %s\n", "Tx Hash", txHash.Hex())
+    fmt.Printf("%-20s: %s\n", "Explorer Link", fmt.Sprintf("https://testnet.monadexplorer.com/tx/%s", txHash.Hex()))
 }

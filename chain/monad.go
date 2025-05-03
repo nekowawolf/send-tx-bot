@@ -42,7 +42,7 @@ func loadConfig() (*TxConfig, error) {
 		return nil, fmt.Errorf("PRIVATE_KEY is required in .env")
 	}
 
-	delay := 20
+	delay := 2
 	if dl := os.Getenv("DELAY_SECONDS"); dl != "" {
 		var err error
 		delay, err = strconv.Atoi(dl)

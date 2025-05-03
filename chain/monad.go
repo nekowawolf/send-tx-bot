@@ -43,7 +43,7 @@ func loadConfig() (*TxConfig, error) {
 	}
 
 	// Load optional configs
-	delay := 0
+	delay := 5
 	if dl := os.Getenv("DELAY_SECONDS"); dl != "" {
 		var err error
 		delay, err = strconv.Atoi(dl)

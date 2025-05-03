@@ -1,11 +1,11 @@
-module github.com/nekowawolf/monad-tx
+module github.com/nekowawolf/send-tx-bot
 
 go 1.23.0
 
 toolchain go1.23.8
 
 require (
-	github.com/ethereum/go-ethereum v1.15.8
+	github.com/ethereum/go-ethereum v1.15.10
 	github.com/joho/godotenv v1.5.1
 )
 

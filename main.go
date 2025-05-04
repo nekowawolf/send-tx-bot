@@ -8,13 +8,10 @@ import (
 	"strings"
 
 	"github.com/nekowawolf/send-tx-bot/chain"
-	
+
 )
 
 func main() {
-	fmt.Println("Monad Send Bot")
-	fmt.Println("----------------")
-
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Print("Enter amount to send to each address (in MON): ")
@@ -38,7 +35,6 @@ func main() {
 	}
 
 	fmt.Printf("\nPreparing to send %d transactions of %.4f MON to all addresses\n", count, amount)
-	fmt.Println("Starting transfer...\n")
 
 	chain.Monad(amount, count)
 }

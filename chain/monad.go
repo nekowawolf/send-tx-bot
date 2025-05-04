@@ -118,14 +118,10 @@ func Monad(amount float64, txPerAddress int) {
 	fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
 
 	amountWei := convertMONtoWei(amount)
-
-	fmt.Printf("\nStarting Transfer\n")
 	fmt.Printf("From: %s\n", fromAddress.Hex())
 	fmt.Printf("Total Recipients: %d\n", len(addresses))
 	fmt.Printf("Transactions per address: %d\n", config.TxPerAddress)
 	fmt.Printf("Amount per transaction: %.4f MON\n", amount)
-	fmt.Printf("Max fee multiplier: %.2fx\n", config.MaxFeeMultiplier)
-	fmt.Printf("Max attempts per tx: %d\n", config.MaxAttempts)
 	if config.DelaySeconds > 0 {
 		fmt.Printf("Delay between txs: %d seconds\n", config.DelaySeconds)
 	}
@@ -153,6 +149,7 @@ func Monad(amount float64, txPerAddress int) {
 				printTransactionDetails(client, txHash, amount, receiver.Hex())
 				fmt.Printf("Transaction %d/%d completed\n", i, config.TxPerAddress)
 				totalSuccess++
+				fmt.Println("──────────────────────────────────────────────")
 			}
 
 			if i < config.TxPerAddress && config.DelaySeconds > 0 {
@@ -164,7 +161,7 @@ func Monad(amount float64, txPerAddress int) {
 	fmt.Printf("\nTransfer Summary\n")
 	fmt.Printf("Total Success: %d\n", totalSuccess)
 	fmt.Printf("Total Failed: %d\n", totalFailed)
-	fmt.Println("──────────────────────────────────────────────")
+	fmt.Println("\nFollow X : 0xNekowawolf\n")
 }
 
 func sendTransaction(client *ethclient.Client, privateKey *ecdsa.PrivateKey, toAddress common.Address, amountWei *big.Int, config *TxConfig, nonce uint64) (common.Hash, error) {
@@ -260,7 +257,6 @@ func printTransactionDetails(client *ethclient.Client, txHash common.Hash, amoun
         status = "Pending"
     }
 
-    fmt.Println("──────────────────────────────────────────────")
     fmt.Printf("%-20s: %.4f MON\n", "Amount Sent", amount)
     fmt.Printf("%-20s: %s\n", "To Address", receiver)
     fmt.Printf("%-20s: %s\n", "Status", status)

@@ -13,6 +13,7 @@ import (
 func main() {
 	fmt.Println("\nSelect Chain:")
 	fmt.Println("1. Monad")
+	fmt.Println("2. MegaETH")
 	fmt.Print("\nEnter your choice: ")
 
 	reader := bufio.NewReader(os.Stdin)
@@ -22,6 +23,8 @@ func main() {
 	switch choice {
 	case "1":
 		chain.MonadSend()
+	case "2":
+		chain.MegaETH()
 	default:
 		fmt.Println("Invalid choice. Please select a valid option.")
 		os.Exit(1)

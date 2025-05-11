@@ -1,26 +1,40 @@
 package chain
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
-	"time"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/fatih/color"
 	"github.com/joho/godotenv"
 )
 
 const (
-	RPC_URL   = "https://testnet-rpc.monad.xyz"
-	CHAIN_ID  = 10143
-	MAX_RECIPIENTS = 50
+	RPC_URL                  = "https://testnet-rpc.monad.xyz"
+	CHAIN_ID                 = 10143
+	MAX_RECIPIENTS           = 50
+	GAS_LIMIT_BUFFER_PERCENT = 10
+)
+
+var (
+	cyan    = color.New(color.FgCyan).SprintFunc()
+	yellow  = color.New(color.FgYellow).SprintFunc()
+	green   = color.New(color.FgGreen).SprintFunc()
+	red     = color.New(color.FgRed).SprintFunc()
+	magenta = color.New(color.FgMagenta).SprintFunc()
+	blue    = color.New(color.FgBlue).SprintFunc()
 )
 
 type TxConfig struct {
@@ -77,6 +91,35 @@ func loadConfig() (*TxConfig, error) {
 	}, nil
 }
 
+func MonadSend() {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Print("Enter amount to send to each address (in MON): ")
+	amountInput, _ := reader.ReadString('\n')
+	amountInput = strings.TrimSpace(amountInput)
+
+	amount, err := strconv.ParseFloat(amountInput, 64)
+	if err != nil || amount <= 0 {
+		fmt.Println(red("Invalid amount. Please enter a positive number."))
+		os.Exit(1)
+	}
+
+	fmt.Print("Enter number of transactions per address: ")
+	countInput, _ := reader.ReadString('\n')
+	countInput = strings.TrimSpace(countInput)
+
+	count, err := strconv.Atoi(countInput)
+	if err != nil || count < 1 {
+		fmt.Println(red("Invalid number. Please enter a positive integer."))
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n%s %d transactions of %.4f MON to all addresses\n",
+		cyan("Preparing to send"), count, amount)
+
+	Monad(amount, count)
+}
+
 func getReceiverAddresses() []common.Address {
 	var addresses []common.Address
 	for i := 1; i <= MAX_RECIPIENTS; i++ {
@@ -91,7 +134,7 @@ func getReceiverAddresses() []common.Address {
 func Monad(amount float64, txPerAddress int) {
 	config, err := loadConfig()
 	if err != nil {
-		log.Fatalf("Config error: %v", err)
+		log.Fatalf(red("Config error: %v"), err)
 	}
 
 	config.AmountMON = amount
@@ -99,18 +142,18 @@ func Monad(amount float64, txPerAddress int) {
 
 	addresses := getReceiverAddresses()
 	if len(addresses) == 0 {
-		log.Fatal("No receiver addresses found in .env (RECEIVER_ADDRESS1 to RECEIVER_ADDRESS50)")
+		log.Fatal(red("No receiver addresses found in .env (RECEIVER_ADDRESS1 to RECEIVER_ADDRESS50)"))
 	}
 
 	client, err := ethclient.Dial(RPC_URL)
 	if err != nil {
-		log.Fatalf("Failed to connect to RPC: %v", err)
+		log.Fatalf(red("Failed to connect to RPC: %v"), err)
 	}
 	defer client.Close()
 
 	privateKey, err := crypto.HexToECDSA(config.PrivateKey)
 	if err != nil {
-		log.Fatalf("Invalid private key: %v", err)
+		log.Fatalf(red("Invalid private key: %v"), err)
 	}
 
 	publicKey := privateKey.Public()
@@ -118,38 +161,38 @@ func Monad(amount float64, txPerAddress int) {
 	fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
 
 	amountWei := convertMONtoWei(amount)
-	fmt.Printf("From: %s\n", fromAddress.Hex())
-	fmt.Printf("Total Recipients: %d\n", len(addresses))
-	fmt.Printf("Transactions per address: %d\n", config.TxPerAddress)
-	fmt.Printf("Amount per transaction: %.4f MON\n", amount)
+	fmt.Printf("%s: %s\n", cyan("From"), fromAddress.Hex())
+	fmt.Printf("%s: %d\n", cyan("Total Recipients"), len(addresses))
+	fmt.Printf("%s: %d\n", cyan("Transactions per address"), config.TxPerAddress)
+	fmt.Printf("%s: %.4f MON\n", cyan("Amount per transaction"), amount)
 	if config.DelaySeconds > 0 {
-		fmt.Printf("Delay between txs: %d seconds\n", config.DelaySeconds)
+		fmt.Printf("%s: %d seconds\n", cyan("Delay between txs"), config.DelaySeconds)
 	}
-	fmt.Println("──────────────────────────────────────────────")
+	fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
 
 	totalSuccess := 0
 	totalFailed := 0
 
 	for _, receiver := range addresses {
-		fmt.Printf("\nProcessing address: %s\n", receiver.Hex())
+		fmt.Printf("\n%s: %s\n", cyan("Processing address"), receiver.Hex())
 
 		for i := 1; i <= config.TxPerAddress; i++ {
 			nonce, err := client.PendingNonceAt(context.Background(), fromAddress)
 			if err != nil {
-				log.Printf("Failed to get nonce for transaction %d: %v", i, err)
+				log.Printf(red("Failed to get nonce for transaction %d: %v"), i, err)
 				totalFailed++
 				continue
 			}
 
 			txHash, err := sendTransaction(client, privateKey, receiver, amountWei, config, nonce)
 			if err != nil {
-				log.Printf("Failed to send transaction %d: %v", i, err)
+				log.Printf(red("Failed to send transaction %d: %v"), i, err)
 				totalFailed++
 			} else {
 				printTransactionDetails(client, txHash, amount, receiver.Hex())
-				fmt.Printf("Transaction %d/%d completed\n", i, config.TxPerAddress)
+				fmt.Printf(green("Transaction %d/%d completed\n"), i, config.TxPerAddress)
 				totalSuccess++
-				fmt.Println("──────────────────────────────────────────────")
+				fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
 			}
 
 			if i < config.TxPerAddress && config.DelaySeconds > 0 {
@@ -158,87 +201,109 @@ func Monad(amount float64, txPerAddress int) {
 		}
 	}
 
-	fmt.Printf("\nTransfer Summary\n")
-	fmt.Printf("Total Success: %d\n", totalSuccess)
-	fmt.Printf("Total Failed: %d\n", totalFailed)
+	fmt.Printf("\n%s\n", cyan("Transfer Summary"))
+	fmt.Printf("%s: %d\n", green("Total Success"), totalSuccess)
+	fmt.Printf("%s: %d\n", red("Total Failed"), totalFailed)
 	fmt.Println("\nFollow X : 0xNekowawolf\n")
 }
 
+func estimateGasLimit(client *ethclient.Client, from common.Address, to common.Address, value *big.Int) (uint64, error) {
+	msg := ethereum.CallMsg{
+		From:  from,
+		To:    &to,
+		Value: value,
+	}
+	gasLimit, err := client.EstimateGas(context.Background(), msg)
+	if err != nil {
+		return 0, fmt.Errorf("failed to estimate gas: %v", err)
+	}
+
+	gasLimitWithBuffer := gasLimit * (100 + GAS_LIMIT_BUFFER_PERCENT) / 100
+	return gasLimitWithBuffer, nil
+}
+
 func sendTransaction(client *ethclient.Client, privateKey *ecdsa.PrivateKey, toAddress common.Address, amountWei *big.Int, config *TxConfig, nonce uint64) (common.Hash, error) {
-    var txHash common.Hash
-    var lastErr error
+	var txHash common.Hash
+	var lastErr error
 
-    for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
-        gasTipCap, err := client.SuggestGasTipCap(context.Background())
-        if err != nil {
-            lastErr = fmt.Errorf("failed to get gas tip cap (attempt %d): %v", attempt, err)
-            time.Sleep(2 * time.Second)
-            continue
-        }
+	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
 
-        head, err := client.HeaderByNumber(context.Background(), nil)
-        if err != nil {
-            lastErr = fmt.Errorf("failed to get chain head (attempt %d): %v", attempt, err)
-            time.Sleep(2 * time.Second)
-            continue
-        }
+	gasLimit, err := estimateGasLimit(client, fromAddress, toAddress, amountWei)
+	if err != nil {
+		return txHash, fmt.Errorf("failed to estimate gas limit: %v", err)
+	}
 
-        baseFee := new(big.Int).Mul(head.BaseFee, big.NewInt(int64(config.MaxFeeMultiplier*100)))
-        baseFee = baseFee.Div(baseFee, big.NewInt(100))
-        gasFeeCap := new(big.Int).Add(gasTipCap, baseFee)
+	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
+		gasTipCap, err := client.SuggestGasTipCap(context.Background())
+		if err != nil {
+			lastErr = fmt.Errorf("failed to get gas tip cap (attempt %d): %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-        tx := types.NewTx(&types.DynamicFeeTx{
-            ChainID:   big.NewInt(CHAIN_ID),
-            Nonce:     nonce,
-            To:        &toAddress,
-            Value:     amountWei,
-            Gas:       21000, 
-            GasTipCap: gasTipCap,
-            GasFeeCap: gasFeeCap,
-        })
+		head, err := client.HeaderByNumber(context.Background(), nil)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to get chain head (attempt %d): %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-        signedTx, err := types.SignTx(tx, types.NewLondonSigner(big.NewInt(CHAIN_ID)), privateKey)
-        if err != nil {
-            lastErr = fmt.Errorf("failed to sign transaction (attempt %d): %v", attempt, err)
-            time.Sleep(time.Duration(attempt) * time.Second)
-            continue
-        }
+		baseFee := new(big.Int).Mul(head.BaseFee, big.NewInt(int64(config.MaxFeeMultiplier*100)))
+		baseFee = baseFee.Div(baseFee, big.NewInt(100))
+		gasFeeCap := new(big.Int).Add(gasTipCap, baseFee)
 
-        err = client.SendTransaction(context.Background(), signedTx)
-        if err != nil {
-            lastErr = fmt.Errorf("failed to send transaction (attempt %d): %v", attempt, err)
-            time.Sleep(time.Duration(attempt) * time.Second)
-            continue
-        }
+		tx := types.NewTx(&types.DynamicFeeTx{
+			ChainID:   big.NewInt(CHAIN_ID),
+			Nonce:     nonce,
+			To:        &toAddress,
+			Value:     amountWei,
+			Gas:       gasLimit,
+			GasTipCap: gasTipCap,
+			GasFeeCap: gasFeeCap,
+		})
 
-        txHash = signedTx.Hash()
-        if err := waitForTransactionConfirmation(client, txHash, 3, 5); err != nil {
-            lastErr = fmt.Errorf("transaction not mined (attempt %d): %v", attempt, err)
-            continue
-        }
+		signedTx, err := types.SignTx(tx, types.NewLondonSigner(big.NewInt(CHAIN_ID)), privateKey)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to sign transaction (attempt %d): %v", attempt, err)
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
 
-        return txHash, nil
-    }
+		err = client.SendTransaction(context.Background(), signedTx)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send transaction (attempt %d): %v", attempt, err)
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
 
-    return txHash, fmt.Errorf("max attempts reached, last error: %v", lastErr)
+		txHash = signedTx.Hash()
+		if err := waitForTransactionConfirmation(client, txHash, 3, 5); err != nil {
+			lastErr = fmt.Errorf("transaction not mined (attempt %d): %v", attempt, err)
+			continue
+		}
+
+		return txHash, nil
+	}
+
+	return txHash, fmt.Errorf("max attempts reached, last error: %v", lastErr)
 }
 
 func waitForTransactionConfirmation(client *ethclient.Client, txHash common.Hash, maxAttempts int, delaySeconds int) error {
-    for attempt := 1; attempt <= maxAttempts; attempt++ {
-        _, isPending, err := client.TransactionByHash(context.Background(), txHash)
-        if err == nil && !isPending {
-            return nil
-        }
-        
-        if err != nil {
-            log.Printf("Transaction status check failed (attempt %d): %v", attempt, err)
-        } else if isPending {
-            log.Printf("Transaction still pending (attempt %d)", attempt)
-        }
-        
-        time.Sleep(time.Duration(delaySeconds) * time.Second)
-    }
-    return fmt.Errorf("transaction not confirmed after %d attempts", maxAttempts)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		_, isPending, err := client.TransactionByHash(context.Background(), txHash)
+		if err == nil && !isPending {
+			return nil
+		}
+
+		if err != nil {
+			log.Printf(yellow("Transaction status check failed (attempt %d): %v"), attempt, err)
+		} else if isPending {
+			log.Printf(yellow("Transaction still pending (attempt %d)"), attempt)
+		}
+
+		time.Sleep(time.Duration(delaySeconds) * time.Second)
+	}
+	return fmt.Errorf("transaction not confirmed after %d attempts", maxAttempts)
 }
 
 func convertMONtoWei(amountMON float64) *big.Int {
@@ -249,17 +314,17 @@ func convertMONtoWei(amountMON float64) *big.Int {
 }
 
 func printTransactionDetails(client *ethclient.Client, txHash common.Hash, amount float64, receiver string) {
-    _, isPending, err := client.TransactionByHash(context.Background(), txHash)
-    status := "Confirmed"
-    if err != nil {
-        status = fmt.Sprintf("Error: %v", err)
-    } else if isPending {
-        status = "Pending"
-    }
+	_, isPending, err := client.TransactionByHash(context.Background(), txHash)
+	status := green("Confirmed")
+	if err != nil {
+		status = red(fmt.Sprintf("Error: %v", err))
+	} else if isPending {
+		status = yellow("Pending")
+	}
 
-    fmt.Printf("%-20s: %.4f MON\n", "Amount Sent", amount)
-    fmt.Printf("%-20s: %s\n", "To Address", receiver)
-    fmt.Printf("%-20s: %s\n", "Status", status)
-    fmt.Printf("%-20s: %s\n", "Tx Hash", txHash.Hex())
-    fmt.Printf("%-20s: %s\n", "Explorer Link", fmt.Sprintf("https://testnet.monadexplorer.com/tx/%s", txHash.Hex()))
+	fmt.Printf("%-20s: %s\n", cyan("Amount Sent"), magenta(fmt.Sprintf("%.4f MON", amount)))
+	fmt.Printf("%-20s: %s\n", cyan("To Address"), receiver)
+	fmt.Printf("%-20s: %s\n", cyan("Status"), status)
+	fmt.Printf("%-20s: %s\n", cyan("Tx Hash"), yellow(txHash.Hex()))
+	fmt.Printf("%-20s: %s\n", cyan("Explorer Link"), blue(fmt.Sprintf("https://testnet.monadexplorer.com/tx/%s", txHash.Hex())))
 }

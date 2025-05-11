@@ -383,5 +383,5 @@ func printTxDetailsMegaETH(client *ethclient.Client, txHash common.Hash, amount 
 	fmt.Printf("%-20s: %s\n", cyan1("Status"), status)
 	fmt.Printf("%-20s: %s\n", cyan1("Tx Hash"), yellow1(txHash.Hex()))
 	fmt.Printf("%-20s: %s\n", cyan1("Fee"), yellow1(feeStr))
-	fmt.Printf("%-20s: %s\n", cyan1("Explorer Link"), blue1(fmt.Sprintf("https://www.megaexplorer.xyz/address/%s", txHash.Hex())))
+	fmt.Printf("%-20s: %s\n", cyan1("Explorer Link"), blue1(fmt.Sprintf("https://www.megaexplorer.xyz/tx/%s", txHash.Hex())))
 }

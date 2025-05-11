@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -314,7 +315,7 @@ func convertMONtoWei(amountMON float64) *big.Int {
 }
 
 func printTransactionDetails(client *ethclient.Client, txHash common.Hash, amount float64, receiver string) {
-	_, isPending, err := client.TransactionByHash(context.Background(), txHash)
+	tx, isPending, err := client.TransactionByHash(context.Background(), txHash)
 	status := green("Confirmed")
 	if err != nil {
 		status = red(fmt.Sprintf("Error: %v", err))
@@ -322,9 +323,38 @@ func printTransactionDetails(client *ethclient.Client, txHash common.Hash, amoun
 		status = yellow("Pending")
 	}
 
+	var feeStr string
+	if tx != nil {
+		receipt, err := bind.WaitMined(context.Background(), client, tx)
+		if err == nil && receipt != nil {
+			var gasPrice *big.Int
+			if tx.Type() == types.DynamicFeeTxType {
+				gasPrice = receipt.EffectiveGasPrice
+			} else {
+				gasPrice = tx.GasPrice()
+			}
+
+			fee := new(big.Float).Quo(
+				new(big.Float).SetInt(
+					new(big.Int).Mul(
+						new(big.Int).SetUint64(receipt.GasUsed),
+						gasPrice,
+					),
+				),
+				new(big.Float).SetInt(big.NewInt(1e18)),
+			)
+			feeStr = fmt.Sprintf("%.6f MON", fee)
+		} else {
+			feeStr = yellow("Waiting for receipt...")
+		}
+	} else {
+		feeStr = red("N/A")
+	}
+
 	fmt.Printf("%-20s: %s\n", cyan("Amount Sent"), magenta(fmt.Sprintf("%.4f MON", amount)))
 	fmt.Printf("%-20s: %s\n", cyan("To Address"), receiver)
 	fmt.Printf("%-20s: %s\n", cyan("Status"), status)
 	fmt.Printf("%-20s: %s\n", cyan("Tx Hash"), yellow(txHash.Hex()))
+	fmt.Printf("%-20s: %s\n", cyan("Fee"), yellow(feeStr))
 	fmt.Printf("%-20s: %s\n", cyan("Explorer Link"), blue(fmt.Sprintf("https://testnet.monadexplorer.com/tx/%s", txHash.Hex())))
 }

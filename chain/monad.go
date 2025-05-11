@@ -93,32 +93,66 @@ func loadConfig() (*TxConfig, error) {
 }
 
 func MonadSend() {
-	reader := bufio.NewReader(os.Stdin)
+    reader := bufio.NewReader(os.Stdin)
 
-	fmt.Print("Enter amount to send to each address (in MON): ")
-	amountInput, _ := reader.ReadString('\n')
-	amountInput = strings.TrimSpace(amountInput)
+    config, err := loadConfig()
+    if err != nil {
+        log.Fatalf(red("Config error: %v"), err)
+    }
 
-	amount, err := strconv.ParseFloat(amountInput, 64)
-	if err != nil || amount <= 0 {
-		fmt.Println(red("Invalid amount. Please enter a positive number."))
-		os.Exit(1)
-	}
+    client, err := ethclient.Dial(RPC_URL)
+    if err != nil {
+        log.Fatalf(red("Failed to connect to RPC: %v"), err)
+    }
+    defer client.Close()
 
-	fmt.Print("Enter number of transactions per address: ")
-	countInput, _ := reader.ReadString('\n')
-	countInput = strings.TrimSpace(countInput)
+    privateKey, err := crypto.HexToECDSA(config.PrivateKey)
+    if err != nil {
+        log.Fatalf(red("Invalid private key: %v"), err)
+    }
+    fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
 
-	count, err := strconv.Atoi(countInput)
-	if err != nil || count < 1 {
-		fmt.Println(red("Invalid number. Please enter a positive integer."))
-		os.Exit(1)
-	}
+    fmt.Printf("\n%s %s\n", cyan("Current Balance:"), magenta(showBalance(client, fromAddress)))
+    fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
 
-	fmt.Printf("\n%s %d transactions of %.4f MON to all addresses\n",
-		cyan("Preparing to send"), count, amount)
+    fmt.Print("\nEnter amount to send to each address (in MON): ")
+    amountInput, _ := reader.ReadString('\n')
+    amountInput = strings.TrimSpace(amountInput)
 
-	Monad(amount, count)
+    amount, err := strconv.ParseFloat(amountInput, 64)
+    if err != nil || amount <= 0 {
+        fmt.Println(red("Invalid amount. Please enter a positive number."))
+        os.Exit(1)
+    }
+
+    fmt.Print("Enter number of transactions per address: ")
+    countInput, _ := reader.ReadString('\n')
+    countInput = strings.TrimSpace(countInput)
+
+    count, err := strconv.Atoi(countInput)
+    if err != nil || count < 1 {
+        fmt.Println(red("Invalid number. Please enter a positive integer."))
+        os.Exit(1)
+    }
+
+    fmt.Printf("\n%s %d transactions of %.4f MON to all addresses\n", 
+        cyan("Preparing to send"), count, amount)
+
+    Monad(client, amount, count, fromAddress)
+}
+
+func showBalance(client *ethclient.Client, address common.Address) string {
+    balance, err := client.BalanceAt(context.Background(), address, nil)
+    if err != nil {
+        return red("Error getting balance")
+    }
+
+    balanceFloat := new(big.Float).Quo(
+        new(big.Float).SetInt(balance),
+        big.NewFloat(1e18),
+    )
+    
+    return fmt.Sprintf("%.4f MON", balanceFloat)
 }
 
 func getReceiverAddresses() []common.Address {
@@ -132,80 +166,73 @@ func getReceiverAddresses() []common.Address {
 	return addresses
 }
 
-func Monad(amount float64, txPerAddress int) {
-	config, err := loadConfig()
-	if err != nil {
-		log.Fatalf(red("Config error: %v"), err)
-	}
+func Monad(client *ethclient.Client, amount float64, txPerAddress int, fromAddress common.Address) {
+    config, err := loadConfig()
+    if err != nil {
+        log.Fatalf(red("Config error: %v"), err)
+    }
 
-	config.AmountMON = amount
-	config.TxPerAddress = txPerAddress
+    config.AmountMON = amount
+    config.TxPerAddress = txPerAddress
 
-	addresses := getReceiverAddresses()
-	if len(addresses) == 0 {
-		log.Fatal(red("No receiver addresses found in .env (RECEIVER_ADDRESS1 to RECEIVER_ADDRESS50)"))
-	}
+    addresses := getReceiverAddresses()
+    if len(addresses) == 0 {
+        log.Fatal(red("No receiver addresses found in .env (RECEIVER_ADDRESS1 to RECEIVER_ADDRESS50)"))
+    }
 
-	client, err := ethclient.Dial(RPC_URL)
-	if err != nil {
-		log.Fatalf(red("Failed to connect to RPC: %v"), err)
-	}
-	defer client.Close()
+    privateKey, err := crypto.HexToECDSA(config.PrivateKey)
+    if err != nil {
+        log.Fatalf(red("Invalid private key: %v"), err)
+    }
 
-	privateKey, err := crypto.HexToECDSA(config.PrivateKey)
-	if err != nil {
-		log.Fatalf(red("Invalid private key: %v"), err)
-	}
+    amountWei := convertMONtoWei(amount)
+    fmt.Printf("%s: %s\n", cyan("From"), fromAddress.Hex())
+    fmt.Printf("%s: %d\n", cyan("Total Recipients"), len(addresses))
+    fmt.Printf("%s: %d\n", cyan("Transactions per address"), config.TxPerAddress)
+    fmt.Printf("%s: %.4f MON\n", cyan("Amount per transaction"), amount)
+    if config.DelaySeconds > 0 {
+        fmt.Printf("%s: %d seconds\n", cyan("Delay between txs"), config.DelaySeconds)
+    }
+   	fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
 
-	publicKey := privateKey.Public()
-	publicKeyECDSA := publicKey.(*ecdsa.PublicKey)
-	fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
+    totalSuccess := 0
+    totalFailed := 0
 
-	amountWei := convertMONtoWei(amount)
-	fmt.Printf("%s: %s\n", cyan("From"), fromAddress.Hex())
-	fmt.Printf("%s: %d\n", cyan("Total Recipients"), len(addresses))
-	fmt.Printf("%s: %d\n", cyan("Transactions per address"), config.TxPerAddress)
-	fmt.Printf("%s: %.4f MON\n", cyan("Amount per transaction"), amount)
-	if config.DelaySeconds > 0 {
-		fmt.Printf("%s: %d seconds\n", cyan("Delay between txs"), config.DelaySeconds)
-	}
-	fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
+    for _, receiver := range addresses {
+        fmt.Printf("\n%s: %s\n", cyan("Processing address"), receiver.Hex())
 
-	totalSuccess := 0
-	totalFailed := 0
+        for i := 1; i <= config.TxPerAddress; i++ {
+            nonce, err := client.PendingNonceAt(context.Background(), fromAddress)
+            if err != nil {
+                log.Printf(red("Failed to get nonce for transaction %d: %v"), i, err)
+                totalFailed++
+                continue
+            }
 
-	for _, receiver := range addresses {
-		fmt.Printf("\n%s: %s\n", cyan("Processing address"), receiver.Hex())
+            txHash, err := sendTransaction(client, privateKey, receiver, amountWei, config, nonce)
+            if err != nil {
+                log.Printf(red("Failed to send transaction %d: %v"), i, err)
+                totalFailed++
+            } else {
+                printTransactionDetails(client, txHash, amount, receiver.Hex())
+                fmt.Printf(green("Transaction %d/%d completed\n"), i, config.TxPerAddress)
+                
+                fmt.Printf("%s: %s\n", cyan("New Balance"), magenta(showBalance(client, fromAddress)))
+                
+                totalSuccess++
+                fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
+            }
 
-		for i := 1; i <= config.TxPerAddress; i++ {
-			nonce, err := client.PendingNonceAt(context.Background(), fromAddress)
-			if err != nil {
-				log.Printf(red("Failed to get nonce for transaction %d: %v"), i, err)
-				totalFailed++
-				continue
-			}
+            if i < config.TxPerAddress && config.DelaySeconds > 0 {
+                time.Sleep(time.Duration(config.DelaySeconds) * time.Second)
+            }
+        }
+    }
 
-			txHash, err := sendTransaction(client, privateKey, receiver, amountWei, config, nonce)
-			if err != nil {
-				log.Printf(red("Failed to send transaction %d: %v"), i, err)
-				totalFailed++
-			} else {
-				printTransactionDetails(client, txHash, amount, receiver.Hex())
-				fmt.Printf(green("Transaction %d/%d completed\n"), i, config.TxPerAddress)
-				totalSuccess++
-				fmt.Println("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
-			}
-
-			if i < config.TxPerAddress && config.DelaySeconds > 0 {
-				time.Sleep(time.Duration(config.DelaySeconds) * time.Second)
-			}
-		}
-	}
-
-	fmt.Printf("\n%s\n", cyan("Transfer Summary"))
-	fmt.Printf("%s: %d\n", green("Total Success"), totalSuccess)
-	fmt.Printf("%s: %d\n", red("Total Failed"), totalFailed)
-	fmt.Println("\nFollow X : 0xNekowawolf\n")
+    fmt.Printf("\n%s\n", cyan("Transfer Summary"))
+    fmt.Printf("%s: %d\n", green("Total Success"), totalSuccess)
+    fmt.Printf("%s: %d\n", red("Total Failed"), totalFailed)
+   	fmt.Println("\nFollow X : 0xNekowawolf\n")
 }
 
 func estimateGasLimit(client *ethclient.Client, from common.Address, to common.Address, value *big.Int) (uint64, error) {
